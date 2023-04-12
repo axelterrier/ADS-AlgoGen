@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Volley34.Data;
@@ -63,9 +63,9 @@ GO
             List<Inscription> inscriptions = Globals.ConvertToList<Inscription>(SQL.GetAll_InscriptionBySaison(saison));
 
             int nombreParents = (int)Math.Ceiling(inscriptions.Count * 0.1); // 10% des inscriptions
-            int nombreGenerationMax = 1000;
+            int nombreGenerationMax = 100;
             double probabiliteCroisement = 0.8;
-            double probabiliteMutation = 0.6;
+            double probabiliteMutation = 0.1;
             int fitness = 0;
             List<List<Inscription>> populationPoule = new List<List<Inscription>>();
             Dictionary<string, List<Inscription>> inscriptionsParPoule = inscriptions
@@ -127,7 +127,7 @@ GO
                     }
 
                     // Affichage du nombre de contraintes pour la génération actuelle
-                    Console.WriteLine("Generation {0} avec {1} de score de fitness", nombreGeneration, fitness);
+                    //Console.WriteLine("Generation {0} avec {1} de score de fitness", nombreGeneration, fitness);
 
                     // Incrémentation du compteur de générations
                     nombreGeneration++;
@@ -149,6 +149,7 @@ GO
                 }
                 else
                 {
+                    Console.WriteLine("Nombre de contraintes : {0}", Fitness(new List<List<Inscription>> { poule }, repartitionPoules).Item2);
                     resultatPoules.Add(populationPoule[0]);
                 }
             }
@@ -171,6 +172,7 @@ GO
                 pouleIndex++;
                 Console.WriteLine(); // Ajoute une ligne vide pour séparer les poules
             }
+
             CreerMatchs(resultatPoules, debutPeriodeMatchs, finPeriodeMatchs, debutPeriodeOff, finPeriodeOff);
 
             stopwatch.Stop();
@@ -292,29 +294,47 @@ GO
 
                         foreach (RepartitionPoule repartition in repartitionList)
                         {
-                            if (!equipePlacement.TryGetValue(repartition.Locaux[0], out Inscription equipeLocale) ||
-                                !equipePlacement.TryGetValue(repartition.Visiteur[0], out Inscription equipeVisiteur))
+                            foreach (int autrePoule in Enumerable.Range(1, equipeList.Count > 6 ? 8 : 6))
                             {
-                                continue;
-                            }
+                                if (autrePoule == poule)
+                                {
+                                    continue;
+                                }
 
-                            if (equipeLocale.Jour != null && equipeVisiteur.Jour != null && equipeLocale.Jour == equipeVisiteur.Jour)
-                            {
-                                fitness--;
-                                contraintes++;
-                            }
-                            else
-                            {
-                                fitness++;
+                                List<RepartitionPoule> autresRepartitionList = repartitionPoules
+                                    .Where(r => Int32.Parse(r.Rang) == rang && r.Poule == autrePoule && r.Tour.Equals("R"))
+                                    .ToList();
+
+                                foreach (RepartitionPoule autresRepartition in autresRepartitionList)
+                                {
+                                    if (!equipePlacement.TryGetValue(repartition.Locaux[0], out Inscription equipeLocale) ||
+                                        !equipePlacement.TryGetValue(repartition.Visiteur[0], out Inscription equipeVisiteur) ||
+                                        !equipePlacement.TryGetValue(autresRepartition.Locaux[0], out Inscription autresEquipeLocale) ||
+                                        !equipePlacement.TryGetValue(autresRepartition.Visiteur[0], out Inscription autresEquipeVisiteur))
+                                    {
+                                        continue;
+                                    }
+
+                                    if (equipeLocale.Jour != null && equipeLocale.Jour == autresEquipeLocale.Jour)
+                                    {
+                                        fitness--;
+                                        contraintes++;
+                                    }
+
+                                    if (equipeVisiteur.Jour != null && equipeVisiteur.Jour == autresEquipeVisiteur.Jour)
+                                    {
+                                        fitness--;
+                                        contraintes++;
+                                    }
+
+                                }
                             }
                         }
                     }
                 }
             }
 
-            Console.WriteLine("Contraintes pour cette évaluation : {0}", contraintes);
             return Tuple.Create(fitness, contraintes, finalEquipePlacements);
-
         }
         static List<List<Inscription>> Selection(List<List<Inscription>> population, int nombreParents, List<RepartitionPoule> repartitionPoules, List<Inscription> poule, Random random)
         {
@@ -434,19 +454,17 @@ GO
         }
         public static void CreerMatchs(List<List<Inscription>> resultatPoules, DateTime debutPeriodeMatchs, DateTime finPeriodeMatchs, DateTime debutPeriodeOff, DateTime finPeriodeOff)
         {
-            TimeSpan matchDuration = new TimeSpan(2, 00, 0); // La durée d'un match, vous pouvez la modifier selon vos besoins
+            TimeSpan matchDuration = new TimeSpan(2, 00, 0);
 
             List<RepartitionPoule> repartitionPoules = Globals.ConvertToList<RepartitionPoule>(SQL.GetAll_RepartitionPoule());
+            List<Creneau> creneaux = Globals.ConvertToList<Creneau>(SQL.GetAll_CreneauBySaison(2022, false));
 
-            List<DateTime> joursMatchs = initDate(debutPeriodeMatchs, finPeriodeMatchs, debutPeriodeOff, finPeriodeOff);
-
-            // Créer la liste des semaines de compétition
             List<int> competitionWeeks = new List<int>();
             for (DateTime date = debutPeriodeMatchs; date <= finPeriodeMatchs; date = date.AddDays(1))
             {
                 if (date < debutPeriodeOff || date > finPeriodeOff)
                 {
-                    int weekNumber = getWeekNumber(date).weekNumber;
+                    (int weekNumber, int weekYear) = getWeekNumber(date);
 
                     if (!competitionWeeks.Contains(weekNumber))
                     {
@@ -455,84 +473,59 @@ GO
                 }
             }
 
+            int pouleIndex = 0;
             foreach (List<Inscription> poule in resultatPoules)
             {
+                pouleIndex++;
                 int pouleSize = poule.Count;
-                int totalMatchesRequired = 0;
-                totalMatchesRequired += (pouleSize * (pouleSize - 1)) / 2;
+                List<RepartitionPoule> repartitionFiltree = repartitionPoules.Where(r => r.Poule == pouleSize && r.Tour == "A").ToList();
 
-                // Filtrer les répartitions appropriées en fonction de la taille de la poule
-                List<RepartitionPoule> repartitionFiltree = repartitionPoules.Where(r => r.Poule == pouleSize).ToList();
+                Console.WriteLine("Poule {0} :", pouleIndex);
 
-                int totalWeeks = competitionWeeks.Count;
-                int currentIndex = 0; // Réinitialiser la valeur de currentIndex pour chaque poule
+                List<DateTime> scheduledMatches = new List<DateTime>();
 
-                for (int currentWeek = 1; currentWeek <= totalWeeks; currentWeek++)
+                for (int i = 0; i < competitionWeeks.Count - 1; i++)
                 {
-                    var repartitionWeek = repartitionFiltree.Where(rp => rp.Rang == currentWeek.ToString()).ToList();
-                    Console.WriteLine("Poule {0}, Semaine {1}", resultatPoules.IndexOf(poule) + 1, currentWeek);
-                    int matchIndex = 0;
+                    int currentWeek = competitionWeeks[i];
 
-                    while (currentIndex < joursMatchs.Count)
+                    Console.WriteLine("  Semaine {0} :", i + 1);
+                    List<RepartitionPoule> matchsSemaine = repartitionFiltree.Where(r => Int32.Parse(r.Rang) == (i + 1)).ToList();
+
+                    foreach (RepartitionPoule match in matchsSemaine)
                     {
-                        var currentWeekInfo = getWeekNumber(joursMatchs[currentIndex]);
-                        var targetWeekInfo = (competitionWeeks[currentWeek - 1], joursMatchs[currentIndex].Year);
+                        int currentYear = GetYearByWeek(currentWeek, debutPeriodeMatchs, finPeriodeMatchs);
 
-                        Console.WriteLine("Current week info: {0}, Target week info: {1}", currentWeekInfo, targetWeekInfo);
-
-                        DateTime targetDate = GetFirstDateOfWeek(targetWeekInfo.Item2, targetWeekInfo.Item1);
-                        DateTime currentDate = joursMatchs[currentIndex];
-
-                        if (currentDate >= targetDate)
-                        {
-                            break;
-                        }
-                        currentIndex++;
-                    }
-
-
-
-                    foreach (RepartitionPoule match in repartitionWeek)
-                    {
-                        if (currentIndex >= joursMatchs.Count)
-                        {
-                            Console.WriteLine("Avertissement : Il n'y a pas assez de jours de match disponibles pour tous les matchs.");
-                            break;
-                        }
-
-                        DateTime matchStartDate = joursMatchs[currentIndex];
-                        DateTime matchEndDate = matchStartDate + matchDuration;
-
+                        // Obtenir les équipes locales et visiteuses
                         Inscription locaux = poule[Char.ToUpper(match.Locaux[0]) - 'A'];
                         Inscription visiteurs = poule[Char.ToUpper(match.Visiteur[0]) - 'A'];
-                        string matchCode = match.ID;
 
-                        Console.WriteLine("\t {0} vs {1} le {2} à {3}", locaux.NomEquipe, visiteurs.NomEquipe, matchStartDate.ToString("yyyy-MM-dd"), locaux.CodeGymnase);
+                        // Trouver le créneau horaire de l'équipe à domicile
+                        Creneau homeTeamSlot = creneaux.FirstOrDefault(c => c.EquipeCode == locaux.CodeEquipe);
 
-                        currentIndex++;
-                        matchIndex++;
-                    }
+                        if (homeTeamSlot != null)
+                        {
+                            DateTime targetDate = GetFirstDateOfWeek(currentYear, currentWeek, homeTeamSlot.CodeJourCreneaux);
+                            DateTime slotDateTime = new DateTime(targetDate.Year, targetDate.Month, targetDate.Day, DateTime.ParseExact(homeTeamSlot.Horaire, "HH:mm", CultureInfo.InvariantCulture).Hour, DateTime.ParseExact(homeTeamSlot.Horaire, "HH:mm", CultureInfo.InvariantCulture).Minute, 0);
 
-                    if (currentIndex >= joursMatchs.Count)
-                    {
-                        break;
+                            // Vérifier si la date trouvée est dans la période off
+                            while (slotDateTime >= debutPeriodeOff && slotDateTime <= finPeriodeOff)
+                            {
+                                slotDateTime = slotDateTime.AddDays(1);
+                            }
+
+                            Console.WriteLine("    Match {0} vs {1} le {2:dd/MM/yyyy} à {3:HH:mm}", locaux.CodeEquipe, visiteurs.CodeEquipe, slotDateTime, slotDateTime);
+                            scheduledMatches.Add(slotDateTime);
+                        }
+                        else
+                        {
+                            Console.WriteLine("    Aucun créneau disponible pour le match {0} vs {1}", locaux.CodeEquipe, visiteurs.CodeEquipe);
+                        }
                     }
                 }
             }
         }
 
-            /// <summary>
-            /// Initialisation des jours de matchs possibles pendant la saison
-            /// Exclusion d'une potentielles périodes
-            /// Exclusion des jours fériés
-            /// Exclusion des weekends
-            /// </summary>
-            /// <param name="debutPeriodeMatchs">Date de début de la compétition</param>
-            /// <param name="finPeriodeMachs">Date de fin de la compétition</param>
-            /// <param name="debutPeriodeOff">Date de début de la potentielle période de pause (vacances)</param>
-            /// <param name="finPeriodeOff">Date de fin de la potentielle période de pause (vacances)</param>
-            /// <returns></returns>
-            public static List<DateTime> initDate(DateTime debutPeriodeMatchs, DateTime finPeriodeMachs, DateTime debutPeriodeOff, DateTime finPeriodeOff)
+        public static List<DateTime> initDate(DateTime debutPeriodeMatchs, DateTime finPeriodeMachs, DateTime debutPeriodeOff, DateTime finPeriodeOff)
         {
             List<DateTime> joursMatchs = new List<DateTime>();
             List<DateTime> joursOff = calculJourFerieByPeriode(debutPeriodeMatchs, finPeriodeMachs);
@@ -551,25 +544,35 @@ GO
                     continue;
                 }
                 joursMatchs.Add(date);
-                Console.WriteLine("Jour : {0} de la semaine {1}", date, getWeekNumber(date));
+                //Console.WriteLine("Jour : {0} de la semaine {1}", date, getWeekNumber(date));
             }
             return joursMatchs;
         }
-
-        public static DateTime GetFirstDateOfWeek(int year, int weekNumber)
+        private static DateTime GetFirstDateOfWeek(int year, int weekNumber, int dayOfWeek)
         {
             DateTime jan1 = new DateTime(year, 1, 1);
             DateTime startOfWeek = jan1.AddDays((weekNumber - 1) * 7 - (int)jan1.DayOfWeek + (int)DayOfWeek.Monday);
-            return startOfWeek;
+            DateTime adjustedDate = startOfWeek.AddDays(dayOfWeek - 1);
+
+            // Ajuster la date pour éviter les week-ends avant la période off
+            while (adjustedDate < debutPeriodeOff && (adjustedDate.DayOfWeek == DayOfWeek.Saturday || adjustedDate.DayOfWeek == DayOfWeek.Sunday))
+            {
+                adjustedDate = adjustedDate.AddDays(1);
+            }
+
+            // Ajuster la date pour éviter la période off et les week-ends après la période off
+            if (adjustedDate >= debutPeriodeOff && adjustedDate <= finPeriodeOff)
+            {
+                adjustedDate = finPeriodeOff.AddDays(1);
+
+                while (adjustedDate.DayOfWeek == DayOfWeek.Saturday || adjustedDate.DayOfWeek == DayOfWeek.Sunday)
+                {
+                    adjustedDate = adjustedDate.AddDays(1);
+                }
+            }
+
+            return adjustedDate;
         }
-
-
-        /// <summary>
-        /// Permets de calculer les jours fériés entre deux dates
-        /// </summary>
-        /// <param name="debut">Date de début</param>
-        /// <param name="fin">Date de fin</param>
-        /// <returns></returns>
         public static List<DateTime> calculJourFerieByPeriode(DateTime debut, DateTime fin)
         {
             List<DateTime> jourOff = new List<DateTime>();
@@ -651,168 +654,32 @@ GO
 
             return jourOff;
         }
-
-        //Prolème avec cette fonction : elle affiche un nombre de jour déterminé par le nombre de jour du mois du premier jour entrant
-        /// <summary>
-        /// Affiche un calendrier pour chaque mois dans la console avec les matchs affichés
-        /// </summary>
-        /// <param name="startDate">Début de la période à afficher</param>
-        /// <param name="endDate">Fin de la période à afficher</param>
-        /// <param name="matches">Liste de matchs à faire apparaitre sur les calendriers</param>
-        static void DrawCalendar(DateTime startDate, DateTime endDate, List<Matchs> matches)
+        public static (int weekNumber, int weekYear) getWeekNumber(DateTime date)
         {
-            List<DateTime> jourOff = calculJourFerieByPeriode(startDate, endDate);
-            var month = startDate;
-
-            while (month <= endDate)
-            {
-                var headingSpaces = new string(' ', 16 - month.ToString("MMMM").Length);
-                Console.WriteLine("\n\n\n");
-                Console.WriteLine($"{month.ToString("MMMM")}{headingSpaces}{month.Year}");
-                Console.WriteLine(new string('-', 20));
-                Console.WriteLine("Lu Ma Me Je Ve Sa Di");
-
-                var padLeftDays = (int)month.DayOfWeek;
-
-                //DayOfWeek utilise dimanche comme début de semaine
-                //décalage du début de la semaine à lundi
-                padLeftDays = padLeftDays - 1;
-                if (padLeftDays < 0)
-                {
-                    padLeftDays = 6;
-                }
-
-                var currentDay = month;
-
-                var iterations = DateTime.DaysInMonth(month.Year, month.Month) + padLeftDays;
-                for (int j = 0; j < iterations; j++)
-                {
-                    if (j < padLeftDays)
-                    {
-                        Console.Write("   ");
-                    }
-                    else
-                    {
-                        if (currentDay >= startDate && currentDay <= endDate)
-                        {
-                            foreach (DateTime jour in jourOff)
-                            {
-                                if (currentDay == jour || Convert.ToInt32(currentDay.DayOfWeek) == 0 || Convert.ToInt32(currentDay.DayOfWeek) == 6)
-                                {
-                                    Console.BackgroundColor = ConsoleColor.White;
-                                    Console.ForegroundColor = ConsoleColor.Black;
-                                    break;
-                                }
-                            }
-
-                            foreach (Matchs match in matches)
-                            {
-                                if (match != null && currentDay.Date != null)
-                                {
-                                    if (match.DateMatch?.Date == currentDay.Date)
-                                    {
-                                        Console.BackgroundColor = ConsoleColor.Yellow;
-                                        Console.ForegroundColor = ConsoleColor.Black;
-                                    }
-                                }
-                            }
-                            Console.Write($"{currentDay.Day.ToString().PadLeft(2, ' ')} ");
-                            Console.BackgroundColor = ConsoleColor.Black;
-                            Console.ForegroundColor = ConsoleColor.White;
-                            if ((j + 1) % 7 == 0)
-                            {
-                                Console.WriteLine();
-                            }
-                        }
-                        currentDay = currentDay.AddDays(1);
-                    }
-                }
-                month = month.AddMonths(1);
-            }
-            Console.WriteLine("\n");
-        }
-
-        /// <summary>
-        /// Retourne le numéro d'une semaine en fonction d'une date selon la norme ISO8601 (Norme FR)
-        /// </summary>
-        /// <param name="d">Date à passer en entrée pour en obtenir le numéro de semaine</param>
-        /// <returns>
-        /// Numéro de semaine de la date
-        /// </returns>
-        public static (int, int) getWeekNumber(DateTime date)
-        {
-            DateTimeFormatInfo dfi = DateTimeFormatInfo.CurrentInfo;
-            Calendar cal = dfi.Calendar;
-
-            int weekNumber = cal.GetWeekOfYear(date, dfi.CalendarWeekRule, dfi.FirstDayOfWeek);
-            int year = date.Year;
-
-            // Check if the date is in the last week of the previous year
+            System.Globalization.Calendar cal = System.Globalization.DateTimeFormatInfo.CurrentInfo.Calendar;
+            int weekNumber = cal.GetWeekOfYear(date, System.Globalization.CalendarWeekRule.FirstFourDayWeek, DayOfWeek.Monday);
+            int weekYear = date.Year;
             if (weekNumber == 1 && date.Month == 12)
             {
-                DateTime lastWeekOfPreviousYear = date.AddDays(-7);
-                int lastWeekNumber = cal.GetWeekOfYear(lastWeekOfPreviousYear, dfi.CalendarWeekRule, dfi.FirstDayOfWeek);
-                if (lastWeekNumber == 52 || lastWeekNumber == 53)
-                {
-                    weekNumber = lastWeekNumber + 1;
-                    year = date.Year - 1;
-                }
+                weekYear++;
             }
-            // Check if the date is in the first week of the next year
             else if (weekNumber >= 52 && date.Month == 1)
             {
-                weekNumber = 1;
-                year = date.Year + 1;
+                weekYear--;
             }
-
-            return (weekNumber, year);
+            return (weekNumber, weekYear);
         }
-
-
-
-
-        public static IEnumerable<IEnumerable<T>> GetDistinctPermutations<T>(IEnumerable<T> items)
+        public static int GetYearByWeek(int weekNumber, DateTime startDate, DateTime endDate)
         {
-            return GetDistinctPermutations(items.ToList(), 0, items.Count() - 1);
-        }
-
-        private static IEnumerable<IEnumerable<T>> GetDistinctPermutations<T>(List<T> items, int startIndex, int endIndex)
-        {
-            if (startIndex == endIndex)
+            for (DateTime date = startDate; date <= endDate; date = date.AddDays(1))
             {
-                yield return items;
-            }
-            else
-            {
-                for (int i = startIndex; i <= endIndex; i++)
+                (int currentWeekNumber, int currentYear) = getWeekNumber(date);
+                if (currentWeekNumber == weekNumber)
                 {
-                    if (i != startIndex && items[i].Equals(items[startIndex])) continue;
-
-                    Swap(items, startIndex, i);
-                    foreach (var perm in GetDistinctPermutations(items, startIndex + 1, endIndex))
-                    {
-                        yield return perm;
-                    }
-                    Swap(items, startIndex, i);
+                    return currentYear;
                 }
             }
-        }
-
-        private static void Swap<T>(List<T> items, int i, int j)
-        {
-            T temp = items[i];
-            items[i] = items[j];
-            items[j] = temp;
-        }
-
-        private static int computeFactoriel(int a)
-        {
-            int fact = 1;
-            for (int x = 1; x <= a; x++)
-            {
-                fact *= x;
-            }
-            return fact;
+            throw new ArgumentException("La semaine donnée n'est pas dans la période spécifiée");
         }
 
     }
