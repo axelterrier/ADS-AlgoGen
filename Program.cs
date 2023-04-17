@@ -30,22 +30,24 @@ namespace ADS_PROJECT
             DECLARE @CodeMatch as NVARCHAR(12)
             SET @CodeMatch = [dbo].[fn_GetNewID] ('M')
             SELECT @CodeMatch
-
          * 
          */
 
 
 
         /*
-         * EXEC [dbo].[sp_Set_MatchAndCalendarEvent]  @MatchCode = '2022-M001045',  @CompetitionCode =  '2022-C114',  @EquipeLocauxCode =  'VLMF1',   @EquipeVisiteursCode =   'L2VBX3',  @EquipeArbitrageCode = NULL, @GymnaseCode = 'MTP_TESSE' ,   @CalendarEventStartDate
- =   '06/10/2022 20:00:00',   @CalendarEventEndDate = '06/10/2022 22:00:00' , @Journee = 2
+         * EXEC [dbo].[sp_Set_MatchAndCalendarEvent]  @MatchCode = '2022-M001045',  @CompetitionCode =  '2022-C114',  @EquipeLocauxCode =  'VLMF1',   @EquipeVisiteursCode =   'L2VBX3',  @EquipeArbitrageCode = NULL, @GymnaseCode = 'MTP_TESSE' ,   @CalendarEventStartDate
+ =   '06/10/2022 20:00:00',   @CalendarEventEndDate = '06/10/2022 22:00:00' , @Journee = 2
 GO
          */
         static Random random = new Random();
         static DateTime debutPeriodeMatchs = new DateTime(2022, 11, 7);
         static DateTime finPeriodeMatchs = new DateTime(2023, 1, 13);
-        static DateTime debutPeriodeOff = new DateTime(2022, 12, 12);
+        static DateTime debutPeriodeOff = new DateTime(2022, 12, 19);
         static DateTime finPeriodeOff = new DateTime(2022, 12, 30);
+        static int saison = 2023;
+        static string typeDeCompetition = "CH";
+        static string tour = "A";
         static void Main(string[] args)
         {
             List<List<Inscription>> resultatPoules = new List<List<Inscription>>();
@@ -53,29 +55,33 @@ GO
             Stopwatch stopwatch = new Stopwatch();
 
             stopwatch.Start();
-            int saison = 2022;
+            
             int taillePopulation = 10;
 
             List<Competition> competitions = Globals.ConvertToList<Competition>(SQL.Get_CompetitionsSaison(saison));
             List<Equipe> equipes = Globals.ConvertToList<Equipe>(SQL.GetAll_EquipeBySaison(saison)).OrderBy(x => x.Division).ToList();
             List<Creneau> creneaux = Globals.ConvertToList<Creneau>(SQL.GetAll_CreneauBySaison(saison, true)).OrderBy(x => x.CodeJourCreneaux).ToList();
             List<RepartitionPoule> repartitionPoules = Globals.ConvertToList<RepartitionPoule>(SQL.GetAll_RepartitionPoule());
-            List<Inscription> inscriptions = Globals.ConvertToList<Inscription>(SQL.GetAll_InscriptionBySaison(saison));
+            List<Inscription> inscriptions = Globals.ConvertToList<Inscription>(SQL.GetAll_InscriptionBySaisonTypeCompetition(saison, typeDeCompetition));
 
             int nombreParents = (int)Math.Ceiling(inscriptions.Count * 0.1); // 10% des inscriptions
             int nombreGenerationMax = 100;
             double probabiliteCroisement = 0.8;
-            double probabiliteMutation = 0.1;
+            double probabiliteMutation = 0.3;
             int fitness = 0;
+            int contraintes = 999;
+            int toleranceContraintes = 0;
             List<List<Inscription>> populationPoule = new List<List<Inscription>>();
             Dictionary<string, List<Inscription>> inscriptionsParPoule = inscriptions
             .GroupBy(i => new { i.CodeCompetition, i.Division, i.Poule })
                 .ToDictionary(g => g.Key.ToString(), g => g.ToList());
+            Dictionary<Tuple<int, int>, List<DateTime>> weeksWithPlayableDates = new Dictionary<Tuple<int, int>, List<DateTime>>();
+            weeksWithPlayableDates = ObtenirListeJourJouables(debutPeriodeMatchs, finPeriodeMatchs, debutPeriodeOff, finPeriodeOff);
 
             int index = 1;
             foreach (List<Inscription> poule in inscriptionsParPoule.Values)
             {
-                Console.WriteLine($"Poule {index}:");
+                Console.WriteLine($"{poule[0].CodeCompetition}-{poule[0].Division}-{poule[0].Poule}:");
 
                 int position = 1;
                 foreach (Inscription inscription in poule)
@@ -88,7 +94,9 @@ GO
                 Console.WriteLine(); // Ajoute une ligne vide pour séparer les poules
             }
 
-            foreach (List<Inscription> poule in inscriptionsParPoule.Values.OrderBy(x => random.Next()))
+            //On prends en priorité les plus grosses poules
+            //Poule les plus nombreuses avec le moins de fausses équipes
+            foreach (List<Inscription> poule in inscriptionsParPoule.Values.OrderByDescending(x => x.Count).ThenByDescending(x => x.Count(e => e.Contrainte != string.Empty)).ThenBy(x => x.Count(e => e.NomEquipe == "----------")))
             {
                 int nombreGeneration = 0;
 
@@ -116,9 +124,9 @@ GO
                     }
 
                     // Évaluation de la fitness des enfants
-                    Tuple<int, int, List<Dictionary<char, Inscription>>> fitnessResult = Fitness(new List<List<Inscription>> { enfants[0] }, repartitionPoules);
+                    Tuple<int, int, List<Dictionary<char, Inscription>>> fitnessResult = Fitness(new List<List<Inscription>> { enfants[0] }, repartitionPoules, ObtenirListeJourJouables(debutPeriodeMatchs, finPeriodeMatchs, debutPeriodeOff, finPeriodeOff), calculJourFerieByPeriode(debutPeriodeMatchs, finPeriodeMatchs));
                     int fitnessEnfant = fitnessResult.Item1;
-                    int contraintes = fitnessResult.Item2;
+                    contraintes = fitnessResult.Item2;
                     // Remplacement de la population actuelle par les enfants si leur fitness est meilleure
                     if (fitnessEnfant >= fitness)
                     {
@@ -127,29 +135,25 @@ GO
                     }
 
                     // Affichage du nombre de contraintes pour la génération actuelle
-                    //Console.WriteLine("Generation {0} avec {1} de score de fitness", nombreGeneration, fitness);
+                    Console.WriteLine("Generation {0} avec {1} de score de fitness", nombreGeneration, fitness);
 
                     // Incrémentation du compteur de générations
                     nombreGeneration++;
 
                     // Ajouter une condition pour vérifier si toutes les contraintes sont satisfaites
                     // et arrêter l'algorithme si c'est le cas
-                    if (contraintes == 0)
 
-                    {
-                        break;
-                    }
                 }
 
                 // Compare la fitness de la poule d'origine à celle de la meilleure solution trouvée
-                int fitnessPouleOrigine = Fitness(new List<List<Inscription>> { poule }, repartitionPoules).Item1;
+                int fitnessPouleOrigine = Fitness(new List<List<Inscription>> { poule }, repartitionPoules, ObtenirListeJourJouables(debutPeriodeMatchs, finPeriodeMatchs, debutPeriodeOff, finPeriodeOff), calculJourFerieByPeriode(debutPeriodeMatchs, finPeriodeMatchs)).Item1;
                 if (fitnessPouleOrigine > fitness)
                 {
                     resultatPoules.Add(poule);
                 }
                 else
                 {
-                    Console.WriteLine("Nombre de contraintes : {0}", Fitness(new List<List<Inscription>> { poule }, repartitionPoules).Item2);
+                    Console.WriteLine("Nombre de contraintes : {0}", Fitness(new List<List<Inscription>> { poule }, repartitionPoules, ObtenirListeJourJouables(debutPeriodeMatchs, finPeriodeMatchs, debutPeriodeOff, finPeriodeOff), calculJourFerieByPeriode(debutPeriodeMatchs, finPeriodeMatchs)).Item2);
                     resultatPoules.Add(populationPoule[0]);
                 }
             }
@@ -173,7 +177,7 @@ GO
                 Console.WriteLine(); // Ajoute une ligne vide pour séparer les poules
             }
 
-            CreerMatchs(resultatPoules, debutPeriodeMatchs, finPeriodeMatchs, debutPeriodeOff, finPeriodeOff);
+            CreerMatchs(resultatPoules, ObtenirListeJourJouables(debutPeriodeMatchs, finPeriodeMatchs, debutPeriodeOff, finPeriodeOff), creneaux);
 
             stopwatch.Stop();
 
@@ -258,10 +262,11 @@ GO
             return populationInitiale;
         }
         //Suivre compte du nb de contrainte pour ajouter condition d'arrêt
-        static Tuple<int, int, List<Dictionary<char, Inscription>>> Fitness(List<List<Inscription>> population, List<RepartitionPoule> repartitionPoules)
+        static Tuple<int, int, List<Dictionary<char, Inscription>>> Fitness(List<List<Inscription>> population, List<RepartitionPoule> repartitionPoules, Dictionary<Tuple<int, int>, List<DateTime>> weeksWithPlayableDates, List<DateTime> holidays)
         {
             int fitness = 0;
             int contraintes = 0;
+            List<Creneau> creneaux = Globals.ConvertToList<Creneau>(SQL.GetAll_CreneauBySaison(saison, true)).OrderBy(x => x.CodeJourCreneaux).ToList();
             List<Dictionary<char, Inscription>> finalEquipePlacements = new List<Dictionary<char, Inscription>>();
 
             foreach (List<Inscription> equipeList in population)
@@ -284,58 +289,109 @@ GO
 
                 finalEquipePlacements.Add(equipePlacement);
 
-                foreach (int rang in Enumerable.Range(1, equipeList.Count > 6 ? 8 : 6))
+                foreach (int journee in Enumerable.Range(1, equipeList.Count > 6 ? 7 : 5))
                 {
                     foreach (int poule in Enumerable.Range(1, equipeList.Count > 6 ? 8 : 6))
                     {
                         List<RepartitionPoule> repartitionList = repartitionPoules
-                            .Where(r => Int32.Parse(r.Rang) == rang && r.Poule == poule && r.Tour.Equals("R"))
+                            .Where(r => Int32.Parse(r.Journee) == journee && r.Poule == poule && r.Tour.Equals(tour))
                             .ToList();
 
                         foreach (RepartitionPoule repartition in repartitionList)
                         {
-                            foreach (int autrePoule in Enumerable.Range(1, equipeList.Count > 6 ? 8 : 6))
+                            if (!equipePlacement.TryGetValue(repartition.Locaux[0], out Inscription equipeLocale))
                             {
-                                if (autrePoule == poule)
+                                continue;
+                            }
+
+                            // Vérifier les contraintes entre les équipes
+                            if (!string.IsNullOrEmpty(equipeLocale.Contrainte))
+                            {
+                                Inscription contrainteEquipe = equipeList.FirstOrDefault(e => e.NomEquipe == equipeLocale.Contrainte);
+
+                                if (contrainteEquipe != null)
                                 {
-                                    continue;
-                                }
+                                    // Vérifier si l'équipe contrainte joue la même semaine et le même jour
+                                    RepartitionPoule contrainteRepartition = repartitionList.FirstOrDefault(r => equipePlacement[r.Locaux[0]].NomEquipe == contrainteEquipe.NomEquipe);
 
-                                List<RepartitionPoule> autresRepartitionList = repartitionPoules
-                                    .Where(r => Int32.Parse(r.Rang) == rang && r.Poule == autrePoule && r.Tour.Equals("R"))
-                                    .ToList();
-
-                                foreach (RepartitionPoule autresRepartition in autresRepartitionList)
-                                {
-                                    if (!equipePlacement.TryGetValue(repartition.Locaux[0], out Inscription equipeLocale) ||
-                                        !equipePlacement.TryGetValue(repartition.Visiteur[0], out Inscription equipeVisiteur) ||
-                                        !equipePlacement.TryGetValue(autresRepartition.Locaux[0], out Inscription autresEquipeLocale) ||
-                                        !equipePlacement.TryGetValue(autresRepartition.Visiteur[0], out Inscription autresEquipeVisiteur))
+                                    if (contrainteRepartition != null)
                                     {
-                                        continue;
-                                    }
+                                        (int weekNumber, int weekYear) = getWeekNumber(weeksWithPlayableDates.Values.ElementAt(Int32.Parse(repartition.Journee) - 1)[0]);
+                                        Tuple<int, int> weekKey = Tuple.Create(weekNumber, weekYear);
+                                        if (weeksWithPlayableDates.TryGetValue(weekKey, out List<DateTime> playableDates))
+                                        {
+                                            DateTime weekStartDate = playableDates[0];
+                                            DateTime weekEndDate = weekStartDate.AddDays(6);
 
-                                    if (equipeLocale.Jour != null && equipeLocale.Jour == autresEquipeLocale.Jour)
-                                    {
-                                        fitness--;
-                                        contraintes++;
-                                    }
+                                            if (equipeLocale.Jour == contrainteEquipe.Jour && weeksWithPlayableDates[weekKey].Any(date => date.Date >= weekStartDate && date.Date <= weekEndDate))
+                                            {
+                                                fitness -= 50;
+                                                contraintes += 50;
+                                                Console.WriteLine("Contraintes entre équipes ! Score de fitness : {0}", fitness);
 
-                                    if (equipeVisiteur.Jour != null && equipeVisiteur.Jour == autresEquipeVisiteur.Jour)
-                                    {
-                                        fitness--;
-                                        contraintes++;
+                                            }
+                                            else
+                                            {
+                                                fitness += 50;
+                                            }
+                                        }
+                                        else
+                                        {
+                                            // Gérer le cas où la clé n'est pas trouvée dans weeksWithPlayableDates
+                                        }
                                     }
-
                                 }
                             }
+
+                            // Vérifier si l'équipe locale a un match prévu sur un jour férié
+                            if (equipeLocale.Jour != null)
+                            {
+                                (int weekNumber, int weekYear) = weeksWithPlayableDates.Keys.ElementAt(Int32.Parse(repartition.Journee) - 1);
+                                Tuple<int, int> weekKey = Tuple.Create(weekNumber, weekYear);
+                                if (weeksWithPlayableDates.TryGetValue(weekKey, out List<DateTime> playableDates))
+                                {
+                                    DateTime firstDayOfWeek = playableDates.OrderBy(date => date).First();
+                                    DateTime slotDateTime = firstDayOfWeek.AddDays((int)equipeLocale.Jour - 1);
+
+                                    // Utilisez ici le créneau horaire approprié pour l'équipe locale
+                                    Creneau homeTeamSlot = creneaux.FirstOrDefault(c => c.EquipeCode == equipeLocale.CodeEquipe);
+                                    DateTime slotTime = DateTime.ParseExact(homeTeamSlot.Horaire, "HH:mm", CultureInfo.InvariantCulture);
+                                    slotDateTime = new DateTime(slotDateTime.Year, slotDateTime.Month, slotDateTime.Day, slotTime.Hour, slotTime.Minute, 0);
+
+                                    // Vérifiez si la date est jouable
+                                    bool playableDateFound = weeksWithPlayableDates[weekKey].Any(playableDate => playableDate.Date == slotDateTime.Date);
+
+                                    if (playableDateFound)
+                                    {
+                                        // Vérifiez si l'équipe locale a un match prévu sur un jour férié
+                                        if (holidays.Select(d => d.Date).Contains(slotDateTime.Date))
+                                        {
+                                            fitness -= 5000;
+                                            contraintes += 5000;
+                                        }
+
+                                    }
+                                    else
+                                    {
+                                        Console.WriteLine("\t\tHoraire tenté : {0}", slotDateTime);
+                                        fitness -= 5000;
+                                        contraintes += 5000;
+                                    }
+                                }
+                                else
+                                {
+                                    // Gérer le cas où la clé n'est pas trouvée dans weeksWithPlayableDates
+                                }
+                            }
+
                         }
                     }
                 }
             }
-
+            Console.WriteLine("Dernier score de fitness : {0}", fitness);
             return Tuple.Create(fitness, contraintes, finalEquipePlacements);
         }
+
         static List<List<Inscription>> Selection(List<List<Inscription>> population, int nombreParents, List<RepartitionPoule> repartitionPoules, List<Inscription> poule, Random random)
         {
             // Initialisation de la liste des parents
@@ -345,7 +401,7 @@ GO
             List<int> fitnesses = new List<int>();
             foreach (List<Inscription> individu in population)
             {
-                fitnesses.Add(Fitness(new List<List<Inscription>> { individu }, repartitionPoules).Item1);
+                fitnesses.Add(Fitness(new List<List<Inscription>> { individu }, repartitionPoules, ObtenirListeJourJouables(debutPeriodeMatchs, finPeriodeMatchs, debutPeriodeOff, finPeriodeOff), calculJourFerieByPeriode(debutPeriodeMatchs, finPeriodeMatchs)).Item1);
             }
 
             // Calcul de la somme totale des fitness
@@ -452,79 +508,104 @@ GO
                 }
             }
         }
-        public static void CreerMatchs(List<List<Inscription>> resultatPoules, DateTime debutPeriodeMatchs, DateTime finPeriodeMatchs, DateTime debutPeriodeOff, DateTime finPeriodeOff)
+
+        //Modifier entrant pour avoir un dictionnaire de Numéro de semaine en clef avec liste de jour jouable en valeur
+        public static Dictionary<Tuple<int, int>, List<DateTime>> ObtenirListeJourJouables(DateTime startDate, DateTime endDate, DateTime startOffPeriod, DateTime endOffPeriod)
         {
-            TimeSpan matchDuration = new TimeSpan(2, 00, 0);
+            Dictionary<Tuple<int, int>, List<DateTime>> weeksWithPlayableDates = new Dictionary<Tuple<int, int>, List<DateTime>>();
 
-            List<RepartitionPoule> repartitionPoules = Globals.ConvertToList<RepartitionPoule>(SQL.GetAll_RepartitionPoule());
-            List<Creneau> creneaux = Globals.ConvertToList<Creneau>(SQL.GetAll_CreneauBySaison(2022, false));
+            List<DateTime> holidays = calculJourFerieByPeriode(startDate, endDate);
 
-            List<int> competitionWeeks = new List<int>();
-            for (DateTime date = debutPeriodeMatchs; date <= finPeriodeMatchs; date = date.AddDays(1))
+            for (DateTime currentDate = startDate; currentDate <= endDate; currentDate = currentDate.AddDays(1))
             {
-                if (date < debutPeriodeOff || date > finPeriodeOff)
+                if (currentDate >= startOffPeriod && currentDate <= endOffPeriod)
                 {
-                    (int weekNumber, int weekYear) = getWeekNumber(date);
-
-                    if (!competitionWeeks.Contains(weekNumber))
-                    {
-                        competitionWeeks.Add(weekNumber);
-                    }
+                    continue;
                 }
+
+                if (currentDate.DayOfWeek == DayOfWeek.Saturday || currentDate.DayOfWeek == DayOfWeek.Sunday)
+                {
+                    continue;
+                }
+
+                if (holidays.Contains(currentDate))
+                {
+                    continue;
+                }
+
+                (int weekNumber, int weekYear) = getWeekNumber(currentDate);
+
+                if (!weeksWithPlayableDates.ContainsKey(Tuple.Create(weekNumber, weekYear)))
+                {
+                    weeksWithPlayableDates[Tuple.Create(weekNumber, weekYear)] = new List<DateTime>();
+                }
+
+                weeksWithPlayableDates[Tuple.Create(weekNumber, weekYear)].Add(currentDate);
             }
 
+            return weeksWithPlayableDates;
+        }
+        public static void CreerMatchs(List<List<Inscription>> resultatPoules, Dictionary<Tuple<int, int>, List<DateTime>> weeksWithPlayableDates, List<Creneau> creneaux)
+        {
+            List<RepartitionPoule> repartitionPoules = Globals.ConvertToList<RepartitionPoule>(SQL.GetAll_RepartitionPoule());
+
             int pouleIndex = 0;
+            int nbMatch = 0;
             foreach (List<Inscription> poule in resultatPoules)
             {
                 pouleIndex++;
                 int pouleSize = poule.Count;
-                List<RepartitionPoule> repartitionFiltree = repartitionPoules.Where(r => r.Poule == pouleSize && r.Tour == "A").ToList();
+                List<RepartitionPoule> repartitionFiltree = repartitionPoules.Where(r => r.Poule == pouleSize && r.Tour == tour).ToList();
 
-                Console.WriteLine("Poule {0} :", pouleIndex);
-
-                List<DateTime> scheduledMatches = new List<DateTime>();
-
-                for (int i = 0; i < competitionWeeks.Count - 1; i++)
+                Console.WriteLine("Poule {0} avec {1} équipes et {2} matchs de prévu ({3}-{4}-{5}) :", pouleIndex, poule.Count, (poule.Count * (poule.Count - 1)) / 2, poule[0].CodeCompetition, poule[0].Division, poule[0].Poule);
+                int journee = 1;
+                foreach (Tuple<int, int> weekKey in weeksWithPlayableDates.Keys)
                 {
-                    int currentWeek = competitionWeeks[i];
-
-                    Console.WriteLine("  Semaine {0} :", i + 1);
-                    List<RepartitionPoule> matchsSemaine = repartitionFiltree.Where(r => Int32.Parse(r.Rang) == (i + 1)).ToList();
-
+                    Console.WriteLine("  Semaine {0}, journée {1} :", weekKey, journee);
+                    List<RepartitionPoule> matchsSemaine = repartitionFiltree.Where(r => Int32.Parse(r.Journee) == (journee)).ToList();
                     foreach (RepartitionPoule match in matchsSemaine)
                     {
-                        int currentYear = GetYearByWeek(currentWeek, debutPeriodeMatchs, finPeriodeMatchs);
-
-                        // Obtenir les équipes locales et visiteuses
                         Inscription locaux = poule[Char.ToUpper(match.Locaux[0]) - 'A'];
                         Inscription visiteurs = poule[Char.ToUpper(match.Visiteur[0]) - 'A'];
 
-                        // Trouver le créneau horaire de l'équipe à domicile
+                        if (locaux.NomEquipe == "----------" || visiteurs.NomEquipe == "----------") // Fausse équipe ajoutée pour avoir des poules de 6 et 8 uniquement
+                        {
+                            continue;
+                        }
+
                         Creneau homeTeamSlot = creneaux.FirstOrDefault(c => c.EquipeCode == locaux.CodeEquipe);
 
-                        if (homeTeamSlot != null)
+                        if (homeTeamSlot != null && weeksWithPlayableDates.ContainsKey(weekKey))
                         {
-                            DateTime targetDate = GetFirstDateOfWeek(currentYear, currentWeek, homeTeamSlot.CodeJourCreneaux);
-                            DateTime slotDateTime = new DateTime(targetDate.Year, targetDate.Month, targetDate.Day, DateTime.ParseExact(homeTeamSlot.Horaire, "HH:mm", CultureInfo.InvariantCulture).Hour, DateTime.ParseExact(homeTeamSlot.Horaire, "HH:mm", CultureInfo.InvariantCulture).Minute, 0);
+                            DateTime firstDayOfWeek = weeksWithPlayableDates[weekKey].OrderBy(d => d).First();
+                            DateTime slotDateTime = firstDayOfWeek.AddDays(homeTeamSlot.CodeJourCreneaux - 1);
 
-                            // Vérifier si la date trouvée est dans la période off
-                            while (slotDateTime >= debutPeriodeOff && slotDateTime <= finPeriodeOff)
+                            DateTime slotTime = DateTime.ParseExact(homeTeamSlot.Horaire, "HH:mm", CultureInfo.InvariantCulture);
+                            slotDateTime = new DateTime(slotDateTime.Year, slotDateTime.Month, slotDateTime.Day, slotTime.Hour, slotTime.Minute, 0);
+
+                            bool playableDateFound = weeksWithPlayableDates[weekKey].Any(playableDate => playableDate.Date == slotDateTime.Date);
+
+                            if (playableDateFound)
                             {
-                                slotDateTime = slotDateTime.AddDays(1);
+                                Console.WriteLine("    Match {0} vs {1} le {2:dd/MM/yyyy} à {3:HH:mm}", locaux.CodeEquipe, visiteurs.CodeEquipe, slotDateTime, slotDateTime);
                             }
-
-                            Console.WriteLine("    Match {0} vs {1} le {2:dd/MM/yyyy} à {3:HH:mm}", locaux.CodeEquipe, visiteurs.CodeEquipe, slotDateTime, slotDateTime);
-                            scheduledMatches.Add(slotDateTime);
+                            else
+                            {
+                                Console.WriteLine("\t\tHoraire tenté : {0}", slotDateTime);
+                            }
+                            nbMatch++;
                         }
                         else
                         {
-                            Console.WriteLine("    Aucun créneau disponible pour le match {0} vs {1}", locaux.CodeEquipe, visiteurs.CodeEquipe);
+                            Console.WriteLine("Problème de créneau");
                         }
                     }
+
+                    journee++;
                 }
             }
+            Console.WriteLine("Nombre de match total : {0}", nbMatch);
         }
-
         public static List<DateTime> initDate(DateTime debutPeriodeMatchs, DateTime finPeriodeMachs, DateTime debutPeriodeOff, DateTime finPeriodeOff)
         {
             List<DateTime> joursMatchs = new List<DateTime>();
@@ -671,15 +752,25 @@ GO
         }
         public static int GetYearByWeek(int weekNumber, DateTime startDate, DateTime endDate)
         {
-            for (DateTime date = startDate; date <= endDate; date = date.AddDays(1))
+            DateTime startOfYear = new DateTime(startDate.Year, 1, 1);
+            while (startOfYear.DayOfWeek != DayOfWeek.Monday)
             {
-                (int currentWeekNumber, int currentYear) = getWeekNumber(date);
-                if (currentWeekNumber == weekNumber)
-                {
-                    return currentYear;
-                }
+                startOfYear = startOfYear.AddDays(1);
             }
-            throw new ArgumentException("La semaine donnée n'est pas dans la période spécifiée");
+
+            DateTime firstDateOfWeek = startOfYear.AddDays((weekNumber - 1) * 7);
+            if (firstDateOfWeek < startDate)
+            {
+                return startDate.Year;
+            }
+            else if (firstDateOfWeek > endDate)
+            {
+                return endDate.Year;
+            }
+            else
+            {
+                return firstDateOfWeek.Year;
+            }
         }
 
     }
