@@ -7,7 +7,6 @@ using Volley34.Data.Entities;
 using System.Data;
 using System.Diagnostics;
 using System.Globalization;
-using System.Linq;
 using System.IO;
 using System.Text;
 
@@ -20,43 +19,24 @@ namespace ADS_PROJECT
 
     class Program
     {
-        //Fournir calendrier au format match et calendar event
-        //--> Procédure stockée : sp_Set_MatchAndCalendarEvent]
 
-        //Pour créer un nouveau match code : 
-
-        /*
-         * 
-            DECLARE @CodeMatch as NVARCHAR(12)
-            SET @CodeMatch = [dbo].[fn_GetNewID] ('M')
-            SELECT @CodeMatch
-         * 
-         */
-
-
-
-        /*
-         * EXEC [dbo].[sp_Set_MatchAndCalendarEvent]  @MatchCode = '2022-M001045',  @CompetitionCode =  '2022-C114',  @EquipeLocauxCode =  'VLMF1',   @EquipeVisiteursCode =   'L2VBX3',  @EquipeArbitrageCode = NULL, @GymnaseCode = 'MTP_TESSE' ,   @CalendarEventStartDate
- =   '06/10/2022 20:00:00',   @CalendarEventEndDate = '06/10/2022 22:00:00' , @Journee = 2
-GO
-         */
         static Random random = new Random();
 
         //Date de la coupe : 
-        static DateTime debutPeriodeMatchs = new DateTime(2023, 4, 3);
+        /*static DateTime debutPeriodeMatchs = new DateTime(2023, 4, 3);
         static DateTime finPeriodeMatchs = new DateTime(2023, 5, 26);
         static DateTime debutPeriodeOff = new DateTime(2023, 4, 24);
         static DateTime finPeriodeOff = new DateTime(2023, 5, 5);
         static DateTime debutPeriodeOff2 = new DateTime(2023, 5, 15);
         static DateTime finPeriodeOff2 = new DateTime(2023, 5, 19);
-
+*/
         //Date de championnant (phase aller)
-        /*static DateTime debutPeriodeMatchs = new DateTime(2022, 11, 7);
+        static DateTime debutPeriodeMatchs = new DateTime(2022, 11, 7);
         static DateTime finPeriodeMatchs = new DateTime(2023,1, 13);
         static DateTime debutPeriodeOff = new DateTime(2022, 12, 12);
         static DateTime finPeriodeOff = new DateTime(2022, 12, 30);
         static DateTime debutPeriodeOff2 = new DateTime(2023, 1, 1);
-        static DateTime finPeriodeOff2 = new DateTime(2023, 1, 1);*/
+        static DateTime finPeriodeOff2 = new DateTime(2023, 1, 1);
 
         static int saison = 2023;
         static string typeDeCompetition = "CO";
@@ -75,12 +55,12 @@ GO
             List<Inscription> inscriptions = Globals.ConvertToList<Inscription>(SQL.GetAll_InscriptionBySaisonTypeCompetition(saison, typeDeCompetition));
 
             
-            int nombreGenerationMax = 10000;
+            int nombreGenerationMax = 1000;
             int nombreGeneration = 0;
             double scoreParent = 0;
             double scoreMutation;
-            double poidsContrainteEquipe = 50.0;
-            double poidsContrainteJourFerie = 1;
+            double poidsContrainteEquipe = 1;
+            double poidsContrainteJourFerie = 1.5;
             double probabiliteCroisement = 0.8;
             double probabiliteMutation = 0.2;
 
@@ -164,7 +144,7 @@ GO
 
                 File.AppendAllText(csvFileName, $"{nombreGeneration};{fitnessPopulation.Item1};{fitnessPopulation.Item2}\n");
 
-            } while (!((fitnessPopulation.Item1 < 1 && fitnessPopulation.Item2 < 3) || nombreGeneration >= nombreGenerationMax));
+            } while (!((fitnessPopulation.Item1 < 1 && fitnessPopulation.Item2 < 1) || nombreGeneration >= nombreGenerationMax));
 
             contraintesEquipe = FitnessPopulation(meilleurePopulation, repartitionPoules, ObtenirListeJourJouables(debutPeriodeMatchs, finPeriodeMatchs, debutPeriodeOff, finPeriodeOff, debutPeriodeOff2, finPeriodeOff2)).Item1;
             contraintesJourFerie = FitnessPopulation(meilleurePopulation, repartitionPoules, ObtenirListeJourJouables(debutPeriodeMatchs, finPeriodeMatchs, debutPeriodeOff, finPeriodeOff, debutPeriodeOff2, finPeriodeOff2)).Item2;
@@ -723,7 +703,6 @@ GO
             return parents;
         }
 
-      
         public static List<Inscription> Croisement(List<Inscription> individu, double probabiliteCroisement, Random random)
         {
             if(random.NextDouble() < probabiliteCroisement)
